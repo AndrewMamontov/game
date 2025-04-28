@@ -677,8 +677,7 @@
         }
 
     </style>
-
-    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
@@ -2527,9 +2526,6 @@
             drawBullets(playerBullets);
             drawExplosions(deltaTime);
 
-            
-
-
             requestAnimationFrame(gameLoop);
         }
 
@@ -2660,10 +2656,7 @@
              restartGame();
              setupEventListeners();
              lastTime = performance.now();
-             
-
-
-            requestAnimationFrame(gameLoop);
+             requestAnimationFrame(gameLoop);
              console.log("Гру ініціалізовано та запущено.");
         }
 
@@ -2672,7 +2665,7 @@
 
     </script>
 
-    <!-- === P2P Connection Panel === -->
+    <!-- P2P Panel -->
     <div id="p2p-panel" class="ui-panel" style="position:fixed;top:20px;right:20px;z-index:100;min-width:220px;">
         <div style="font-size:14px;margin-bottom:6px;">
             <strong>Ваш ID:</strong> <span id="my-peer-id">…</span>
@@ -2681,126 +2674,174 @@
                style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--color-panel-border);background:#222;color:#e0e1e6;">
         <button id="connect-peer-btn" class="upgrade-button" style="margin-top:8px;width:100%;">Подключиться</button>
     </div>
-    <!-- === End P2P Connection Panel === -->
     
 
-<!-- === P2P networking code === -->
+<div id="p2p-panel" class="ui-panel" style="position:fixed;top:20px;right:20px;z-index:100;min-width:220px;">
+    <div style="font-size:14px;margin-bottom:6px;">
+        <strong>Ваш ID:</strong> <span id="my-peer-id">…</span>
+    </div>
+    <input id="peer-id-input" type="text" placeholder="ID друга"
+           style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--color-panel-border);background:#222;color:#e0e1e6;">
+    <button id="connect-peer-btn" class="upgrade-button" style="margin-top:8px;width:100%;">Подключиться</button>
+</div>
+
+
+<!-- === Enhanced sync networking === -->
 <script>
 (() => {
     const peer   = new Peer();
     let conn     = null;
-    const remoteKeys  = {};
-    const remoteMouse = {x:0,y:0};
+    let isHost   = false;
+    let lastStateTime = 0;
 
     // UI elements
     const myPeerIdSpan = document.getElementById('my-peer-id');
     const peerInput    = document.getElementById('peer-id-input');
     const connectBtn   = document.getElementById('connect-peer-btn');
 
-    peer.on('open', id => {
-        console.log('Peer open', id);
-        if (myPeerIdSpan) myPeerIdSpan.textContent = id;
+    peer.on('open', id => { if(myPeerIdSpan) myPeerIdSpan.textContent = id; });
+
+    peer.on('connection', c => { 
+        conn = c; 
+        isHost = true;           // тот, к кому подключились, хост
+        setupConn(); 
     });
 
-    peer.on('connection', c => { conn = c; setupConn(); });
-
     window.joinFriend = (id) => {
-        conn = peer.connect(id);
+        conn   = peer.connect(id);
+        isHost = false;          // подключившийся — клиент
         setupConn();
     };
 
-    if (connectBtn) {
-        connectBtn.addEventListener('click', () => {
+    if(connectBtn){
+        connectBtn.addEventListener('click', ()=>{
             const id = (peerInput.value||'').trim();
-            if (id) joinFriend(id);
+            if(id) joinFriend(id);
         });
     }
 
-    function setupConn() {
-        if (!conn) return;
-        conn.on('data', handleRemoteInput);
-        console.log('P2P connected!');
-        const panel = document.getElementById('p2p-panel');
-        if (panel) panel.style.display = 'none';
+    function setupConn(){
+        if(!conn) return;
+        conn.on('data', handleMessage);
+        console.log('P2P connected! host=', isHost);
+        const panel=document.getElementById('p2p-panel');
+        if(panel) panel.style.display='none';
+        if(!isHost){
+            // клиент: чистим локальную карту, ждём снимок мира
+            shapes.length = 0;
+            mobs.length   = 0;
+        }
     }
 
-    // Send helpers
-    function sendPacket(obj) { if (conn && conn.open) conn.send(obj); }
+    // ---------- ввод клиента ----------
+    function send(msg){ if(conn && conn.open) conn.send(msg); }
 
-    // Mirror local input ---------------------------------
-    window.addEventListener('keydown', e => {
-        const k = e.key.toLowerCase();
-        if (typeof keys !== 'undefined' && keys.hasOwnProperty(k))
-            sendPacket({t:'k',k,d:true});
-    });
-    window.addEventListener('keyup', e => {
-        const k = e.key.toLowerCase();
-        if (typeof keys !== 'undefined' && keys.hasOwnProperty(k))
-            sendPacket({t:'k',k,d:false});
-    });
+    window.addEventListener('keydown', e=>{ if(!isHost) send({t:'kd',k:e.key}); });
+    window.addEventListener('keyup',   e=>{ if(!isHost) send({t:'ku',k:e.key}); });
+
     const canvas = document.getElementById('gameCanvas');
-    canvas.addEventListener('mousemove', e => {
-        const r = canvas.getBoundingClientRect();
-        sendPacket({t:'m',x:e.clientX-r.left,y:e.clientY-r.top});
+    canvas.addEventListener('mousemove', e=>{
+        if(!isHost){
+            const r=canvas.getBoundingClientRect();
+            send({t:'m',x:e.clientX-r.left,y:e.clientY-r.top});
+        }
     });
 
-    // Hook shoot
     const originalPlayerShoot = window.playerShoot;
-    window.playerShoot = function() {
+    window.playerShoot = function(){
         originalPlayerShoot();
-        sendPacket({t:'s'});
+        if(!isHost) send({t:'s'});
     };
 
-    // Remote data handling -------------------------------
-    function handleRemoteInput(p) {
-        switch (p.t) {
-            case 'k': remoteKeys[p.k] = p.d; break;
-            case 'm': remoteMouse.x = p.x; remoteMouse.y = p.y; break;
-            case 's': remoteShoot(); break;
-        }
-    }
-    function remoteShoot() {/* локальная логика стрельбы друга не обязательна */}
+    // ---------- хост применяет ввод клиента ----------
+    const clientKeys  = {};
+    const clientMouse = {x:0,y:0};
 
-    // Remote position estimation -------------------------
-    let remotePos = {x: 100, y: 100};
-    function updateRemote(dt) {
-        let dx=0,dy=0;
-        if (remoteKeys.w||remoteKeys.arrowup) dy-=1;
-        if (remoteKeys.s||remoteKeys.arrowdown) dy+=1;
-        if (remoteKeys.a||remoteKeys.arrowleft) dx-=1;
-        if (remoteKeys.d||remoteKeys.arrowright) dx+=1;
-        const len = Math.hypot(dx,dy) || 1;
-        dx/=len; dy/=len;
-        if (typeof playerTank !== 'undefined') {
-            remotePos.x += dx*playerTank.movementSpeed.max*(dt/16.67)*0.6;
-            remotePos.y += dy*playerTank.movementSpeed.max*(dt/16.67)*0.6;
-            remotePos.x = Math.max(15, Math.min(canvas.width-15, remotePos.x));
-            remotePos.y = Math.max(15, Math.min(canvas.height-15, remotePos.y));
-        }
+    const remoteKeys  = {};
+    const remoteMouse = {x:0,y:0};
+    let remotePos = {x:100, y:100};
+
+    function applyClientInput(){
+        if(!isHost) return;
+        for(const k in keys) remoteKeys[k] = !!clientKeys[k];
+        remoteMouse.x = clientMouse.x;
+        remoteMouse.y = clientMouse.y;
     }
 
-    // Patch gameLoop render
+    // ---------- хост → клиент : мир 20 Гц ----------
+    setInterval(()=>{
+        if(!isHost || !(conn&&conn.open)) return;
+        const snapshot = {
+            t:'state',
+            time: Date.now(),
+            player: {
+                x: playerTank.position.x,
+                y: playerTank.position.y,
+                rot: playerTank.rotation,
+                tur: playerTank.turretAngle
+            },
+            remotePlayer: {
+                x: remotePos.x,
+                y: remotePos.y
+            },
+            shapes: shapes.map(s=>({x:s.drawX,y:s.drawY,type:s.type,size:s.size,h:s.currentHp})),
+            mobs  : mobs.map(m=>({x:m.x,y:m.y,l:m.level,h:m.currentHp}))
+        };
+        send(snapshot);
+    },50);
+
+    // ---------- обработка сообщений ----------
+    function handleMessage(msg){
+        switch(msg.t){
+            case 'kd': clientKeys[msg.k.toLowerCase()] = true; break;
+            case 'ku': clientKeys[msg.k.toLowerCase()] = false; break;
+            case 'm':  clientMouse.x=msg.x; clientMouse.y=msg.y; break;
+            case 's':  // выстрел клиента — просто воспроизводим звук/эффект если нужно
+                       break;
+            case 'state':
+                if(isHost) break; // хосту снимок не нужен
+                // применяем снимок мира
+                playerTank.position.x = msg.remotePlayer.x;
+                playerTank.position.y = msg.remotePlayer.y;
+                remotePos.x = msg.player.x;
+                remotePos.y = msg.player.y;
+
+                shapes.length = 0;
+                msg.shapes.forEach(o=>{
+                    shapes.push({drawX:o.x, drawY:o.y, type:o.type, size:o.size,
+                        color: shapeTypes[o.type].color, outline: shapeTypes[o.type].outline,
+                        currentHp:o.h, maxHealth:o.h});
+                });
+                mobs.length = 0;
+                msg.mobs.forEach(o=>{
+                    mobs.push({x:o.x,y:o.y,level:o.l,currentHp:o.h});
+                });
+                break;
+        }
+    }
+
+    // ---------- рисуем удалённого игрока как кружок ----------
     const originalDrawGrid = window.drawGrid;
-    window.drawGrid = function() {
+    window.drawGrid = function(){
         originalDrawGrid.apply(this, arguments);
         const ctx = canvas.getContext('2d');
         ctx.save();
         ctx.fillStyle = '#18ffff';
         ctx.beginPath();
-        ctx.arc(remotePos.x, remotePos.y, 15, 0, Math.PI*2);
+        ctx.arc(remotePos.x, remotePos.y, 18, 0, Math.PI*2);
         ctx.fill();
         ctx.restore();
     };
 
-    const originalUpdateEffects = window.updateEffects;
-    window.updateEffects = function(ts) {
-        originalUpdateEffects(ts);
-        updateRemote(ts);
+    // ---------- вставляем обработку ввода клиента перед эффектами ----------
+    const origUpdateEffects = window.updateEffects;
+    window.updateEffects = function(ts){
+        applyClientInput();
+        origUpdateEffects(ts);
     };
-
 })();
 </script>
-<!-- === End P2P networking code === -->
+<!-- === End enhanced sync networking === -->
 
 </body>
 </html>
