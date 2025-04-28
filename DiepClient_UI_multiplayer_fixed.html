@@ -2665,183 +2665,179 @@
 
     </script>
 
-    <!-- P2P Panel -->
-    <div id="p2p-panel" class="ui-panel" style="position:fixed;top:20px;right:20px;z-index:100;min-width:220px;">
-        <div style="font-size:14px;margin-bottom:6px;">
-            <strong>Ваш ID:</strong> <span id="my-peer-id">…</span>
-        </div>
-        <input id="peer-id-input" type="text" placeholder="ID друга"
-               style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--color-panel-border);background:#222;color:#e0e1e6;">
-        <button id="connect-peer-btn" class="upgrade-button" style="margin-top:8px;width:100%;">Подключиться</button>
-    </div>
-    
-
-<div id="p2p-panel" class="ui-panel" style="position:fixed;top:20px;right:20px;z-index:100;min-width:220px;">
-    <div style="font-size:14px;margin-bottom:6px;">
-        <strong>Ваш ID:</strong> <span id="my-peer-id">…</span>
-    </div>
-    <input id="peer-id-input" type="text" placeholder="ID друга"
-           style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--color-panel-border);background:#222;color:#e0e1e6;">
-    <button id="connect-peer-btn" class="upgrade-button" style="margin-top:8px;width:100%;">Подключиться</button>
+<!-- P2P Panel -->
+<div id="p2p-panel" class="ui-panel" style="position:fixed;top:20px;right:20px;z-index:200;min-width:240px;">
+  <div style="font-size:14px;margin-bottom:6px;"><strong>Ваш ID:</strong> <span id="my-peer-id">…</span></div>
+  <input id="peer-id-input" type="text" placeholder="ID друга"
+         style="width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--color-panel-border);background:#222;color:#e0e1e6;">
+  <button id="connect-peer-btn" class="upgrade-button" style="margin-top:8px;width:100%;">Подключиться</button>
 </div>
+<!-- END P2P Panel -->
 
 
-<!-- === Enhanced sync networking === -->
+<!-- === Full sync networking === -->
 <script>
 (() => {
-    const peer   = new Peer();
-    let conn     = null;
-    let isHost   = false;
-    let lastStateTime = 0;
+    // PeerJS setup
+    const peer = new Peer();
+    let conn   = null;
+    let isHost = false;
+    window.isHost = false; // глобально, чтобы использовать в других функциях
 
-    // UI elements
-    const myPeerIdSpan = document.getElementById('my-peer-id');
-    const peerInput    = document.getElementById('peer-id-input');
-    const connectBtn   = document.getElementById('connect-peer-btn');
+    const peerSpan  = document.getElementById('my-peer-id');
+    const peerInput = document.getElementById('peer-id-input');
+    const btnConn   = document.getElementById('connect-peer-btn');
+    const panel     = document.getElementById('p2p-panel');
+    const canvas    = document.getElementById('gameCanvas');
+    const ctx       = canvas.getContext('2d');
 
-    peer.on('open', id => { if(myPeerIdSpan) myPeerIdSpan.textContent = id; });
+    peer.on('open', id => { if(peerSpan) peerSpan.textContent = id; });
 
-    peer.on('connection', c => { 
-        conn = c; 
-        isHost = true;           // тот, к кому подключились, хост
-        setupConn(); 
+    peer.on('connection', c => {
+        conn   = c;
+        isHost = window.isHost = true;
+        setupConn();
     });
 
-    window.joinFriend = (id) => {
+    window.joinFriend = id => {
         conn   = peer.connect(id);
-        isHost = false;          // подключившийся — клиент
+        isHost = window.isHost = false;
         setupConn();
     };
 
-    if(connectBtn){
-        connectBtn.addEventListener('click', ()=>{
-            const id = (peerInput.value||'').trim();
-            if(id) joinFriend(id);
-        });
-    }
+    btnConn.addEventListener('click', () => {
+        const id = (peerInput.value||'').trim();
+        if(id) joinFriend(id);
+    });
 
     function setupConn(){
         if(!conn) return;
         conn.on('data', handleMessage);
-        console.log('P2P connected! host=', isHost);
-        const panel=document.getElementById('p2p-panel');
+        console.log('P2P connected! host =', isHost);
         if(panel) panel.style.display='none';
         if(!isHost){
-            // клиент: чистим локальную карту, ждём снимок мира
-            shapes.length = 0;
-            mobs.length   = 0;
+            // клиент очищает локальный мир и выключает свои симуляции
+            shapes.length = 0; mobs.length = 0;
         }
     }
 
-    // ---------- ввод клиента ----------
+    // Массивы ввода от клиента
+    const clientKeys = {};
+    const clientMouse = {x:0,y:0};
+
+    // --- Управление отправкой ввода ---
     function send(msg){ if(conn && conn.open) conn.send(msg); }
 
-    window.addEventListener('keydown', e=>{ if(!isHost) send({t:'kd',k:e.key}); });
-    window.addEventListener('keyup',   e=>{ if(!isHost) send({t:'ku',k:e.key}); });
-
-    const canvas = document.getElementById('gameCanvas');
+    window.addEventListener('keydown', e=>{
+        if(!isHost){ send({t:'kd', k:e.key.toLowerCase()}); }
+    });
+    window.addEventListener('keyup', e=>{
+        if(!isHost){ send({t:'ku', k:e.key.toLowerCase()}); }
+    });
     canvas.addEventListener('mousemove', e=>{
         if(!isHost){
-            const r=canvas.getBoundingClientRect();
-            send({t:'m',x:e.clientX-r.left,y:e.clientY-r.top});
+            const r = canvas.getBoundingClientRect();
+            send({t:'m', x:e.clientX - r.left, y:e.clientY - r.top});
         }
     });
 
-    const originalPlayerShoot = window.playerShoot;
+    const origPlayerShoot = window.playerShoot;
     window.playerShoot = function(){
-        originalPlayerShoot();
-        if(!isHost) send({t:'s'});
+        origPlayerShoot();
+        if(!isHost){ send({t:'s'}); }
     };
 
-    // ---------- хост применяет ввод клиента ----------
-    const clientKeys  = {};
-    const clientMouse = {x:0,y:0};
-
-    const remoteKeys  = {};
+    // --- переменные удаленного игрока ---
+    const remoteKeys = {};
     const remoteMouse = {x:0,y:0};
-    let remotePos = {x:100, y:100};
+    let remotePlayer = {x:canvas.width/2, y:canvas.height/2, rot:0, tur:0};
 
-    function applyClientInput(){
-        if(!isHost) return;
-        for(const k in keys) remoteKeys[k] = !!clientKeys[k];
-        remoteMouse.x = clientMouse.x;
-        remoteMouse.y = clientMouse.y;
-    }
-
-    // ---------- хост → клиент : мир 20 Гц ----------
-    setInterval(()=>{
-        if(!isHost || !(conn&&conn.open)) return;
-        const snapshot = {
-            t:'state',
-            time: Date.now(),
-            player: {
-                x: playerTank.position.x,
-                y: playerTank.position.y,
-                rot: playerTank.rotation,
-                tur: playerTank.turretAngle
-            },
-            remotePlayer: {
-                x: remotePos.x,
-                y: remotePos.y
-            },
-            shapes: shapes.map(s=>({x:s.drawX,y:s.drawY,type:s.type,size:s.size,h:s.currentHp})),
-            mobs  : mobs.map(m=>({x:m.x,y:m.y,l:m.level,h:m.currentHp}))
-        };
-        send(snapshot);
-    },50);
-
-    // ---------- обработка сообщений ----------
-    function handleMessage(msg){
-        switch(msg.t){
-            case 'kd': clientKeys[msg.k.toLowerCase()] = true; break;
-            case 'ku': clientKeys[msg.k.toLowerCase()] = false; break;
-            case 'm':  clientMouse.x=msg.x; clientMouse.y=msg.y; break;
-            case 's':  // выстрел клиента — просто воспроизводим звук/эффект если нужно
-                       break;
-            case 'state':
-                if(isHost) break; // хосту снимок не нужен
-                // применяем снимок мира
-                playerTank.position.x = msg.remotePlayer.x;
-                playerTank.position.y = msg.remotePlayer.y;
-                remotePos.x = msg.player.x;
-                remotePos.y = msg.player.y;
-
-                shapes.length = 0;
-                msg.shapes.forEach(o=>{
-                    shapes.push({drawX:o.x, drawY:o.y, type:o.type, size:o.size,
-                        color: shapeTypes[o.type].color, outline: shapeTypes[o.type].outline,
-                        currentHp:o.h, maxHealth:o.h});
-                });
-                mobs.length = 0;
-                msg.mobs.forEach(o=>{
-                    mobs.push({x:o.x,y:o.y,level:o.l,currentHp:o.h});
-                });
-                break;
+    // --- Хост применяет ввод клиента перед своим updateEffects ---
+    const origUpdateEffects = window.updateEffects;
+    window.updateEffects = function(ts){
+        if(isHost){
+            for(const k in keys){ remoteKeys[k] = !!clientKeys[k]; }
+            remoteMouse.x = clientMouse.x;
+            remoteMouse.y = clientMouse.y;
         }
-    }
+        origUpdateEffects(ts);
+    };
 
-    // ---------- рисуем удалённого игрока как кружок ----------
-    const originalDrawGrid = window.drawGrid;
+    // --- Рисуем удалённого игрока ---
+    const origDrawGrid = window.drawGrid;
     window.drawGrid = function(){
-        originalDrawGrid.apply(this, arguments);
-        const ctx = canvas.getContext('2d');
+        origDrawGrid.apply(this, arguments);
         ctx.save();
         ctx.fillStyle = '#18ffff';
         ctx.beginPath();
-        ctx.arc(remotePos.x, remotePos.y, 18, 0, Math.PI*2);
+        ctx.arc(remotePlayer.x, remotePlayer.y, 20, 0, Math.PI*2);
         ctx.fill();
         ctx.restore();
     };
 
-    // ---------- вставляем обработку ввода клиента перед эффектами ----------
-    const origUpdateEffects = window.updateEffects;
-    window.updateEffects = function(ts){
-        applyClientInput();
-        origUpdateEffects(ts);
+    // --- Хост рассылает снимок мира каждые 60 мс ---
+    setInterval(()=>{
+        if(!isHost || !(conn&&conn.open)) return;
+        send(buildSnapshot());
+    }, 60);
+
+    function buildSnapshot(){
+        return {
+            t:'state',
+            p:{x:playerTank.position.x, y:playerTank.position.y},
+            r:{x:remotePlayer.x,        y:remotePlayer.y},
+            shapes: shapes.map(s=>({id:s.id,x:s.drawX,y:s.drawY,type:s.type,size:s.size,h:s.currentHp})),
+            mobs:   mobs.map(m=>({id:m.id,x:m.x,y:m.y,l:m.level,h:m.currentHp}))
+        };
+    }
+
+    // --- Клиент применяет снимок мира ---
+    function applySnapshot(ss){
+        remotePlayer.x = ss.p.x;
+        remotePlayer.y = ss.p.y;
+        playerTank.position.x = ss.r.x;
+        playerTank.position.y = ss.r.y;
+
+        // пересобираем формы
+        shapes.length = 0;
+        ss.shapes.forEach(o=>{
+            shapes.push({
+                id:o.id, type:o.type, size:o.size,
+                drawX:o.x, drawY:o.y, color:shapeTypes[o.type].color,
+                outline:shapeTypes[o.type].outline,
+                currentHp:o.h, maxHealth:o.h
+            });
+        });
+        // мобы
+        mobs.length = 0;
+        ss.mobs.forEach(o=>{
+            mobs.push({
+                id:o.id,x:o.x,y:o.y,level:o.l,currentHp:o.h,maxHp:o.h,
+                // базовые поля для рендера
+                movementSpeed:{acc:0,max:0},bulletDamage:0
+            });
+        });
+    }
+
+    function handleMessage(msg){
+        switch(msg.t){
+            case 'kd': clientKeys[msg.k] = true; break;
+            case 'ku': clientKeys[msg.k] = false; break;
+            case 'm':  clientMouse.x = msg.x; clientMouse.y = msg.y; break;
+            case 's':  break; // звук / вспышка по желанию
+            case 'state': if(!isHost) applySnapshot(msg); break;
+        }
+    }
+
+    // --- Чтобы у клиента не шла собственная физика форм/мобов ---
+    const origUpdateGameObjects = window.updateGameObjects || function(){};
+    window.updateGameObjects = function(){
+        if(isHost) origUpdateGameObjects();
     };
+
 })();
 </script>
-<!-- === End enhanced sync networking === -->
+<!-- === End full sync networking === -->
 
 </body>
 </html>
